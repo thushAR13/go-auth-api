@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"go-auth-api/db"
@@ -12,6 +13,8 @@ import (
 )
 
 func Register(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
 	var req models.RegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -24,8 +27,7 @@ func Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var exists bool
-	err := db.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE email=$1)", req.Email).Scan(&exists)
-
+	err := db.DB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE email=$1)", req.Email).Scan(&exists)
 	if err != nil {
 		slog.Error("Error checking database",
 			"error", err)
@@ -49,9 +51,9 @@ func Register(w http.ResponseWriter, r *http.Request) {
 
 	var user models.User
 
-	err = db.DB.QueryRow(
-		"INSERT INTO users (name, email, password) values ($1, $2, $3) RETURNING id, name, email",
+	err = db.DB.QueryRowContext(ctx, "INSERT INTO users (name, email, password) values ($1, $2, $3) RETURNING id, name, email",
 		req.Name, req.Email, hashedPassword).Scan(&user.ID, &user.Name, &user.Email)
+
 	if err != nil {
 		slog.Error("Failed to print user",
 			"error", err,
@@ -74,6 +76,9 @@ func Register(w http.ResponseWriter, r *http.Request) {
 }
 
 func Login(w http.ResponseWriter, r *http.Request) {
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
 
 	var req models.LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -125,7 +130,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	expiresAt := time.Now().Add(7 * 24 * time.Hour)
-	if err := db.SaveRefreshToken(user.ID, refreshToken, expiresAt); err != nil {
+	if err := db.SaveRefreshToken(ctx, user.ID, refreshToken, expiresAt); err != nil {
 		slog.Error("failed to save refresh token", "error", err, "userID", user.ID)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
@@ -141,6 +146,9 @@ func Login(w http.ResponseWriter, r *http.Request) {
 }
 
 func Refresh(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
 	var req struct {
 		RefreshToken string `json:"refresh_token"`
 	}
@@ -178,8 +186,8 @@ func Refresh(w http.ResponseWriter, r *http.Request) {
 	var newRefreshToken string
 
 	newRefreshToken, err = services.GenerateRefreshToken()
-	db.SaveRefreshToken(token.UserId, newRefreshToken, time.Now().Add(7*24*time.Hour))
-	db.DeleteRefreshToken(req.RefreshToken)
+	db.SaveRefreshToken(ctx, token.UserId, newRefreshToken, time.Now().Add(7*24*time.Hour))
+	db.DeleteRefreshToken(ctx, req.RefreshToken)
 
 	var user models.User
 

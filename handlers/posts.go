@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"go-auth-api/db"
@@ -11,6 +12,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func getClaimsFromContext(r *http.Request) *services.Claims {
@@ -18,6 +20,8 @@ func getClaimsFromContext(r *http.Request) *services.Claims {
 }
 
 func CreatePost(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
 	claims := getClaimsFromContext(r)
 
 	var req models.CreatePostRequest
@@ -33,7 +37,7 @@ func CreatePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	post, err := db.CreatePost(claims.UserID, req.Title, req.Body)
+	post, err := db.CreatePost(ctx, claims.UserID, req.Title, req.Body)
 	if err != nil {
 		slog.Error("failed to create post", "error", err, "userID", claims.UserID)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -46,8 +50,11 @@ func CreatePost(w http.ResponseWriter, r *http.Request) {
 }
 
 func GetPosts(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
 	claims := getClaimsFromContext(r)
-	posts, err := db.GetPostsByUserId(claims.UserID)
+	posts, err := db.GetPostsByUserId(ctx, claims.UserID)
 	if err != nil {
 		slog.Error("failed to fatch posts", "error", err, "UserID", claims.UserID)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -59,6 +66,9 @@ func GetPosts(w http.ResponseWriter, r *http.Request) {
 }
 
 func GetPost(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
 	claims := getClaimsFromContext(r)
 	id, err := strconv.Atoi(r.PathValue("id"))
 	if err != nil {
@@ -66,7 +76,7 @@ func GetPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	post, err := db.GetPostByID(id)
+	post, err := db.GetPostByID(ctx, id)
 	if err == sql.ErrNoRows {
 		slog.Error("Post not found", "Error", err)
 		http.Error(w, "Post not found", http.StatusNotFound)
@@ -78,7 +88,7 @@ func GetPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if post.UserId != claims.UserID {
+	if post.UserID != claims.UserID {
 		http.Error(w, "Post not found", http.StatusNotFound)
 		return
 	}
@@ -89,6 +99,8 @@ func GetPost(w http.ResponseWriter, r *http.Request) {
 
 func DeletePost(w http.ResponseWriter, r *http.Request) {
 	claims := getClaimsFromContext(r)
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
 
 	id, err := strconv.Atoi(r.PathValue("id"))
 	if err != nil {
@@ -96,7 +108,7 @@ func DeletePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := db.DeletePost(id, claims.UserID); err != nil {
+	if err := db.DeletePost(ctx, id, claims.UserID); err != nil {
 		if strings.Contains(err.Error(), "Post not found") {
 			http.Error(w, "Post not found", http.StatusNotFound)
 			return
