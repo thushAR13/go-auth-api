@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"go-auth-api/db"
 	"go-auth-api/middleware"
 	"go-auth-api/models"
 	"go-auth-api/services"
@@ -19,7 +18,7 @@ func getClaimsFromContext(r *http.Request) *services.Claims {
 	return r.Context().Value(middleware.UserContextKey).(*services.Claims)
 }
 
-func CreatePost(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) CreatePost(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	claims := getClaimsFromContext(r)
@@ -37,7 +36,7 @@ func CreatePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	post, err := db.CreatePost(ctx, claims.UserID, req.Title, req.Body)
+	post, err := h.store.CreatePost(ctx, claims.UserID, req.Title, req.Body)
 	if err != nil {
 		slog.Error("failed to create post", "error", err, "userID", claims.UserID)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -49,12 +48,12 @@ func CreatePost(w http.ResponseWriter, r *http.Request) {
 
 }
 
-func GetPosts(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) GetPosts(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
 	claims := getClaimsFromContext(r)
-	posts, err := db.GetPostsByUserId(ctx, claims.UserID)
+	posts, err := h.store.GetPostsByUserId(ctx, claims.UserID)
 	if err != nil {
 		slog.Error("failed to fatch posts", "error", err, "UserID", claims.UserID)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -65,7 +64,7 @@ func GetPosts(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(posts)
 }
 
-func GetPost(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) GetPost(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
@@ -76,7 +75,7 @@ func GetPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	post, err := db.GetPostByID(ctx, id)
+	post, err := h.store.GetPostByID(ctx, id)
 	if err == sql.ErrNoRows {
 		slog.Error("Post not found", "Error", err)
 		http.Error(w, "Post not found", http.StatusNotFound)
@@ -97,7 +96,7 @@ func GetPost(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(post)
 }
 
-func DeletePost(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) DeletePost(w http.ResponseWriter, r *http.Request) {
 	claims := getClaimsFromContext(r)
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
@@ -108,7 +107,7 @@ func DeletePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := db.DeletePost(ctx, id, claims.UserID); err != nil {
+	if err := h.store.DeletePost(ctx, id, claims.UserID); err != nil {
 		if strings.Contains(err.Error(), "Post not found") {
 			http.Error(w, "Post not found", http.StatusNotFound)
 			return

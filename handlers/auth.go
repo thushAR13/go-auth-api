@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"go-auth-api/db"
 	"go-auth-api/models"
 	"go-auth-api/services"
 	"log/slog"
@@ -12,7 +11,7 @@ import (
 	"time"
 )
 
-func Register(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	var req models.RegisterRequest
@@ -27,7 +26,7 @@ func Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var exists bool
-	err := db.DB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE email=$1)", req.Email).Scan(&exists)
+	err := h.store.DB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE email=$1)", req.Email).Scan(&exists)
 	if err != nil {
 		slog.Error("Error checking database",
 			"error", err)
@@ -51,7 +50,7 @@ func Register(w http.ResponseWriter, r *http.Request) {
 
 	var user models.User
 
-	err = db.DB.QueryRowContext(ctx, "INSERT INTO users (name, email, password) values ($1, $2, $3) RETURNING id, name, email",
+	err = h.store.DB.QueryRowContext(ctx, "INSERT INTO users (name, email, password) values ($1, $2, $3) RETURNING id, name, email",
 		req.Name, req.Email, hashedPassword).Scan(&user.ID, &user.Name, &user.Email)
 
 	if err != nil {
@@ -75,7 +74,7 @@ func Register(w http.ResponseWriter, r *http.Request) {
 
 }
 
-func Login(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
@@ -93,7 +92,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 
 	var user models.User
 
-	err := db.DB.QueryRow("SELECT id, name, email, password FROM users WHERE email = $1", req.Email).
+	err := h.store.DB.QueryRow("SELECT id, name, email, password FROM users WHERE email = $1", req.Email).
 		Scan(&user.ID, &user.Name, &user.Email, &user.Password)
 	if err == sql.ErrNoRows {
 		http.Error(w, "Invalid email or password", http.StatusUnauthorized)
@@ -130,7 +129,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	expiresAt := time.Now().Add(7 * 24 * time.Hour)
-	if err := db.SaveRefreshToken(ctx, user.ID, refreshToken, expiresAt); err != nil {
+	if err := h.store.SaveRefreshToken(ctx, user.ID, refreshToken, expiresAt); err != nil {
 		slog.Error("failed to save refresh token", "error", err, "userID", user.ID)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
@@ -145,7 +144,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 
 }
 
-func Refresh(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
@@ -164,7 +163,7 @@ func Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var token models.RefreshToken
-	err := db.DB.QueryRow("SELECT user_id, token, expires_at FROM refresh_tokens WHERE token = $1", req.RefreshToken).
+	err := h.store.DB.QueryRow("SELECT user_id, token, expires_at FROM refresh_tokens WHERE token = $1", req.RefreshToken).
 		Scan(&token.UserId, &token.Token, &token.ExpiresAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -186,12 +185,12 @@ func Refresh(w http.ResponseWriter, r *http.Request) {
 	var newRefreshToken string
 
 	newRefreshToken, err = services.GenerateRefreshToken()
-	db.SaveRefreshToken(ctx, token.UserId, newRefreshToken, time.Now().Add(7*24*time.Hour))
-	db.DeleteRefreshToken(ctx, req.RefreshToken)
+	h.store.SaveRefreshToken(ctx, token.UserId, newRefreshToken, time.Now().Add(7*24*time.Hour))
+	h.store.DeleteRefreshToken(ctx, req.RefreshToken)
 
 	var user models.User
 
-	err = db.DB.QueryRow("SELECT email FROM users WHERE id=$1", token.UserId).Scan(&user.Email)
+	err = h.store.DB.QueryRow("SELECT email FROM users WHERE id=$1", token.UserId).Scan(&user.Email)
 	if err != nil {
 		slog.Error("Email not found for the user")
 		http.Error(w, "Internal server error", http.StatusInternalServerError)

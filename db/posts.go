@@ -7,9 +7,9 @@ import (
 	"go-auth-api/models"
 )
 
-func CreatePost(ctx context.Context, userID int, title, body string) (*models.Post, error) {
+func (s *Store) CreatePost(ctx context.Context, userID int, title, body string) (*models.Post, error) {
 	post := &models.Post{}
-	err := DB.QueryRowContext(ctx, `INSERT INTO posts (user_id, title, body)
+	err := s.db.QueryRowContext(ctx, `INSERT INTO posts (user_id, title, body)
 		VALUES ($1, $2, $3)
 		RETURNING id, user_id, title, body, created_at`,
 		userID, title, body,
@@ -21,8 +21,8 @@ func CreatePost(ctx context.Context, userID int, title, body string) (*models.Po
 	return post, nil
 }
 
-func GetPostsByUserId(ctx context.Context, userId int) ([]models.Post, error) {
-	rows, err := DB.QueryContext(ctx, `SELECT id, user_id, title, body, created_at
+func (s *Store) GetPostsByUserId(ctx context.Context, userId int) ([]models.Post, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, user_id, title, body, created_at
 		FROM posts WHERE user_id = $1  ORDER BY created_at DESC`, userId,
 	)
 
@@ -42,10 +42,10 @@ func GetPostsByUserId(ctx context.Context, userId int) ([]models.Post, error) {
 	return posts, nil
 }
 
-func GetPostByID(ctx context.Context, postID int) (*models.Post, error) {
+func (s *Store) GetPostByID(ctx context.Context, postID int) (*models.Post, error) {
 	post := &models.Post{}
 
-	err := DB.QueryRowContext(ctx, `SELECT id, user_id, title, body, created_at FROM posts WHERE id=$1`, postID).Scan(
+	err := s.db.QueryRowContext(ctx, `SELECT id, user_id, title, body, created_at FROM posts WHERE id=$1`, postID).Scan(
 		&post.ID, &post.UserID, &post.Title, &post.Body, &post.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, sql.ErrNoRows
@@ -56,8 +56,8 @@ func GetPostByID(ctx context.Context, postID int) (*models.Post, error) {
 	return post, nil
 }
 
-func DeletePost(ctx context.Context, postID, userID int) error {
-	result, err := DB.ExecContext(ctx,
+func (s *Store) DeletePost(ctx context.Context, postID, userID int) error {
+	result, err := s.db.ExecContext(ctx,
 		`DELETE FROM posts WHERE id=$1 AND user_id=$2`, postID, userID,
 	)
 	if err != nil {

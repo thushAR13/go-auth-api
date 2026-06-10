@@ -60,7 +60,7 @@ func (s *visitorStore) getVisitor(ip string) *rate.Limiter {
 
 var store = newVisitorStore()
 
-func RateLmitMiddleWare(next http.Handler) http.Handler {
+func RateLimitMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ip := r.RemoteAddr
 		limiter := store.getVisitor(ip)

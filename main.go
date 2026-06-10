@@ -1,60 +1,68 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"go-auth-api/config"
 	"go-auth-api/db"
 	"go-auth-api/handlers"
 	"go-auth-api/middleware"
 	"go-auth-api/services"
-	"log"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/joho/godotenv"
 )
 
 func main() {
-
 	if err := godotenv.Load(); err != nil {
-		slog.Warn("No .env file found, reading from environment")
+		slog.Warn("no .env file found, reading from environment")
 	}
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
-
 	slog.SetDefault(logger)
-
 	slog.Info("Logger initialized")
 
 	cfg, err := config.Load()
 	if err != nil {
-		slog.Error("Configuration error",
-			"error", err)
+		slog.Error("configuration error", "error", err)
 		os.Exit(1)
 	}
-	db.Init(cfg)
+
+	database := db.Init(cfg)
+	store := db.NewStore(database)
+	h := handlers.NewHandler(store)
 	services.Init(cfg)
 
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("Welcome to go auth api!!\n"))
+		w.Write([]byte("Welcome to go-auth-api!\n"))
 	})
 
-	mux.Handle("POST /api/register", middleware.RateLmitMiddleWare(
-		http.HandlerFunc(handlers.Register),
+	// Public routes — rate limited only
+	mux.Handle("POST /api/register", middleware.Chain(
+		h.Register,
+		middleware.RateLimitMiddleware,
 	))
-	mux.Handle("POST /api/login", middleware.RateLmitMiddleWare(
-		http.HandlerFunc(handlers.Login),
+	mux.Handle("POST /api/login", middleware.Chain(
+		h.Login,
+		middleware.RateLimitMiddleware,
 	))
 
+	// Refresh and logout — no rate limit needed
+	mux.HandleFunc("POST /api/refresh", h.Refresh)
+
+	// Profile — auth only
 	mux.Handle("GET /api/profile", middleware.AuthMiddleware(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			claims := r.Context().Value(middleware.UserContextKey).(*services.Claims)
-
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]any{
 				"userId": claims.UserID,
@@ -63,24 +71,59 @@ func main() {
 		}),
 	))
 
-	mux.Handle("POST /api/refresh", middleware.RateLmitMiddleWare(http.HandlerFunc(handlers.Refresh)))
-
-	mux.Handle("POST /api/posts", middleware.AuthMiddleware(http.HandlerFunc(handlers.CreatePost)))
-
-	mux.Handle("GET /api/posts", middleware.AuthMiddleware(
-		http.HandlerFunc(handlers.GetPosts),
+	// Post routes — auth + rate limited
+	mux.Handle("POST /api/posts", middleware.Chain(
+		h.CreatePost,
+		middleware.AuthMiddleware,
+		middleware.RateLimitMiddleware,
 	))
-	mux.Handle("GET /api/posts/{id}", middleware.AuthMiddleware(
-		http.HandlerFunc(handlers.GetPost),
+	mux.Handle("GET /api/posts", middleware.Chain(
+		h.GetPosts,
+		middleware.AuthMiddleware,
+		middleware.RateLimitMiddleware,
 	))
-	mux.Handle("DELETE /api/posts/{id}", middleware.AuthMiddleware(
-		http.HandlerFunc(handlers.DeletePost),
+	mux.Handle("GET /api/posts/{id}", middleware.Chain(
+		GetPost,
+		middleware.AuthMiddleware,
+		middleware.RateLimitMiddleware,
+	))
+	mux.Handle("DELETE /api/posts/{id}", middleware.Chain(
+		h.DeletePost,
+		middleware.AuthMiddleware,
+		middleware.RateLimitMiddleware,
 	))
 
-	log.Printf("Server starting on port 8080...")
-	if err := http.ListenAndServe(":"+cfg.Port, middleware.LoggerMiddleWare(mux)); err != nil {
-		slog.Error("Failed to start server",
-			"error", err)
+	server := &http.Server{
+		Addr:         ":" + cfg.Port,
+		Handler:      middleware.LoggerMiddleware(mux),
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	// Start server in a goroutine so main can listen for signals below
+	go func() {
+		slog.Info("server starting", "port", cfg.Port)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("server failed to start", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	// Block until Ctrl+C or kill signal
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	slog.Info("shutdown signal received, draining requests...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := server.Shutdown(ctx); err != nil {
+		slog.Error("server forced to shutdown", "error", err)
 		os.Exit(1)
 	}
+
+	slog.Info("server shutdown cleanly")
 }
