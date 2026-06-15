@@ -48,15 +48,14 @@ func (s *Store) RotateRefreshToken(ctx context.Context, oldToken string, userID 
 	_, err = tx.ExecContext(ctx, "INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)",
 		userID, newToken, expiresAt)
 	if err != nil {
-		tx.Rollback()
-		return err
+		return fmt.Errorf("RotateRefreshToke insert: %w", err)
 	}
 	_, err = tx.ExecContext(ctx, "DELETE FROM refresh_tokens WHERE token=$1", oldToken)
 	if err != nil {
 		tx.Rollback()
-		return err
+		return fmt.Errorf("RotateRefreshToken delete: %w", err)
 	}
-	tx.Commit()
-	return err
+
+	return tx.Commit()
 
 }
