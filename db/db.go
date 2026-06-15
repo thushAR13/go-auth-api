@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"go-auth-api/config"
 	"log/slog"
@@ -18,6 +19,12 @@ type Store struct {
 func NewStore(db *sql.DB) *Store {
 	return &Store{DB: db}
 }
+
+var (
+	ErrNotFound      = errors.New("not found")
+	ErrAlreadyExists = errors.New("already exists")
+)
+
 func Init(cfg *config.Config) *sql.DB {
 	// connStr := "postgres://postgres:1111@localhost:5432/goauthapi?sslmode=disable"
 	connStr := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", cfg.DBUser, cfg.DBPassword, cfg.DBHost, cfg.DBPort, cfg.DBName)

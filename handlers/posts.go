@@ -2,15 +2,15 @@ package handlers
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
+	"errors"
+	"go-auth-api/db"
 	"go-auth-api/middleware"
 	"go-auth-api/models"
 	"go-auth-api/services"
 	"log/slog"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -76,7 +76,7 @@ func (h *Handler) GetPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	post, err := h.store.GetPostByID(ctx, id)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, db.ErrNotFound) {
 		slog.Error("Post not found", "Error", err)
 		http.Error(w, "Post not found", http.StatusNotFound)
 		return
@@ -108,7 +108,7 @@ func (h *Handler) DeletePost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.store.DeletePost(ctx, id, claims.UserID); err != nil {
-		if strings.Contains(err.Error(), "Post not found") {
+		if errors.Is(err, db.ErrNotFound) {
 			http.Error(w, "Post not found", http.StatusNotFound)
 			return
 		}

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"go-auth-api/config"
 	"go-auth-api/db"
 	"go-auth-api/handlers"
@@ -60,16 +59,7 @@ func main() {
 	mux.HandleFunc("POST /api/refresh", h.Refresh)
 
 	// Profile — auth only
-	mux.Handle("GET /api/profile", middleware.AuthMiddleware(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			claims := r.Context().Value(middleware.UserContextKey).(*services.Claims)
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]any{
-				"userId": claims.UserID,
-				"email":  claims.Email,
-			})
-		}),
-	))
+	mux.Handle("GET /api/profile", middleware.AuthMiddleware(http.HandlerFunc(h.Profile)))
 
 	// Post routes — auth + rate limited
 	mux.Handle("POST /api/posts", middleware.Chain(
@@ -83,7 +73,7 @@ func main() {
 		middleware.RateLimitMiddleware,
 	))
 	mux.Handle("GET /api/posts/{id}", middleware.Chain(
-		GetPost,
+		h.GetPost,
 		middleware.AuthMiddleware,
 		middleware.RateLimitMiddleware,
 	))

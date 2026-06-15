@@ -1,13 +1,9 @@
 package handlers
 
-import (
-	"go-auth-api/db"
-)
-
 type Handler struct {
-	store *db.Store
+	store Storer
 }
 
-func NewHandler(store *db.Store) *Handler {
+func NewHandler(store Storer) *Handler {
 	return &Handler{store: store}
 }

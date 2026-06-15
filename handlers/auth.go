@@ -2,8 +2,9 @@ package handlers
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
+	"errors"
+	"go-auth-api/db"
 	"go-auth-api/models"
 	"go-auth-api/services"
 	"log/slog"
@@ -25,40 +26,21 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var exists bool
-	err := h.store.DB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE email=$1)", req.Email).Scan(&exists)
-	if err != nil {
-		slog.Error("Error checking database",
-			"error", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	if exists {
-		http.Error(w, "Email already registered", http.StatusConflict)
-		return
-	}
-
 	hashedPassword, err := services.HashPassword(req.Password)
-
 	if err != nil {
-		slog.Error("Failed to hash password",
-			"error", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		slog.Error("failed to hash password", "error", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	var user models.User
-
-	err = h.store.DB.QueryRowContext(ctx, "INSERT INTO users (name, email, password) values ($1, $2, $3) RETURNING id, name, email",
-		req.Name, req.Email, hashedPassword).Scan(&user.ID, &user.Name, &user.Email)
-
+	user, err := h.store.CreateUser(ctx, req.Name, req.Email, hashedPassword)
 	if err != nil {
-		slog.Error("Failed to print user",
-			"error", err,
-			"ID", user.ID,
-			"email", user.Email)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		if errors.Is(err, db.ErrAlreadyExists) {
+			http.Error(w, "email already registered", http.StatusConflict)
+			return
+		}
+		slog.Error("Register: unexpected error", "error", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
@@ -90,16 +72,13 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var user models.User
-
-	err := h.store.DB.QueryRow("SELECT id, name, email, password FROM users WHERE email = $1", req.Email).
-		Scan(&user.ID, &user.Name, &user.Email, &user.Password)
-	if err == sql.ErrNoRows {
+	user, err := h.store.GetUserByEmail(ctx, req.Email)
+	if errors.Is(err, db.ErrNotFound) {
 		http.Error(w, "Invalid email or password", http.StatusUnauthorized)
 		return
 	}
 	if err != nil {
-		slog.Error("Error frtching user",
+		slog.Error("Error fetching user",
 			"error", err,
 			"email", req.Email)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -162,12 +141,11 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "No refresh token found", http.StatusBadRequest)
 		return
 	}
-	var token models.RefreshToken
-	err := h.store.DB.QueryRow("SELECT user_id, token, expires_at FROM refresh_tokens WHERE token = $1", req.RefreshToken).
-		Scan(&token.UserId, &token.Token, &token.ExpiresAt)
+
+	token, err := h.store.GetRefreshToken(ctx, req.RefreshToken)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			slog.Error("Refresh token not found in db", "error:", err)
+		if errors.Is(err, db.ErrNotFound) {
+			slog.Error("Refresh token not found in db", "error:", db.ErrNotFound)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
@@ -185,14 +163,17 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 	var newRefreshToken string
 
 	newRefreshToken, err = services.GenerateRefreshToken()
-	h.store.SaveRefreshToken(ctx, token.UserId, newRefreshToken, time.Now().Add(7*24*time.Hour))
-	h.store.DeleteRefreshToken(ctx, req.RefreshToken)
+	err = h.store.RotateRefreshToken(ctx, req.RefreshToken, token.UserId, newRefreshToken, time.Now().Add(7*24*time.Hour))
 
-	var user models.User
-
-	err = h.store.DB.QueryRow("SELECT email FROM users WHERE id=$1", token.UserId).Scan(&user.Email)
 	if err != nil {
-		slog.Error("Email not found for the user")
+		slog.Error("Error rotating refresh token", "Error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	user, err := h.store.GetUserById(ctx, token.UserId)
+	if err != nil {
+		slog.Error("User fetch error - ID", "Error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -207,4 +188,14 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 		"expires_in":    7 * 24 * 60 * 60,
 	})
 
+}
+
+func (h *Handler) Profile(w http.ResponseWriter, r *http.Request) {
+	claims := getClaimsFromContext(r)
+	w.Header().Set("Content-Type", "application/json")
+
+	json.NewEncoder(w).Encode(map[string]any{
+		"userId": claims.UserID,
+		"email":  claims.Email,
+	})
 }
